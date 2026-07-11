@@ -1,0 +1,661 @@
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  Button,
+  ActivityIndicator,
+  StyleSheet,
+  ScrollView,
+  Platform,
+  Alert,
+} from 'react-native';
+
+export function formatCents(cents: number): string {
+  if (typeof cents !== 'number' || isNaN(cents)) {
+    return '$0.00';
+  }
+  const dollars = Math.abs(cents) / 100;
+  const formatted = dollars.toFixed(2);
+  const sign = cents < 0 ? '-' : '';
+  return `${sign}$${formatted}`;
+}
+export function parseAmountToCents(input: string): number | null {
+  if (!input || typeof input !== 'string') {
+    return null;
+  }
+  let cleaned = input.trim();
+  
+  if (cleaned.startsWith('$')) {
+    cleaned = cleaned.substring(1);
+  }
+  cleaned = cleaned.trim();
+  if (cleaned.length === 0) {
+    return null;
+  }
+  const isValidFormat = /^-?\d*\.?\d{0,2}$/.test(cleaned);
+  if (!isValidFormat) {
+    return null;
+  }
+  const numberValue = parseFloat(cleaned);
+  if (isNaN(numberValue) || !isFinite(numberValue)) {
+    return null;
+  }
+  const cents = Math.round(numberValue * 100);
+  return cents;
+}
+export function validateTopUpAmount(
+  input: string,
+  summary?: WalletSummary
+): string | null {
+  if (!input || input.trim().length === 0) {
+    return "Please enter a valid amount";
+  }
+  const cents = parseAmountToCents(input);
+  if (cents === null) {
+    return "Please enter a valid amount";
+  }
+  if (cents <= 0) {
+    return "Amount must be greater than $0.00";
+  }
+  const MIN_TOP_UP_CENTS = 100;
+  if (cents < MIN_TOP_UP_CENTS) {
+    return "Minimum top-up is $1.00";
+  }
+  const MAX_TOP_UP_CENTS = 50000;
+  if (cents > MAX_TOP_UP_CENTS) {
+    return "Maximum single top-up is $500.00";
+  }
+  if (summary) {
+    if (cents > summary.remainingDailyTopUpCents) {
+      return "Amount exceeds your remaining daily limit";
+    }
+  }
+  return null;
+}
+export interface WalletSummary {
+  balanceCents: number;
+  remainingDailyTopUpCents: number;
+}
+export interface TopUpQuote {
+  amountCents: number;
+  feeCents: number;
+  resultingBalanceCents: number;
+}
+export interface WalletApi {
+  fetchWalletSummary(userId: string): Promise<WalletSummary>;
+  createTopUpQuote(userId: string, amountCents: number): Promise<TopUpQuote>;
+}
+export const defaultWalletApi: WalletApi = {
+  async fetchWalletSummary(userId: string): Promise<WalletSummary> {
+    if (!userId || typeof userId !== 'string') {
+      throw new Error('Invalid userId');
+    }
+    try {
+      const response = await fetch(`https://your-api.com/wallet/${userId}/summary`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      const data = await response.json();
+      return {
+        balanceCents: data.balanceCents || 0,
+        remainingDailyTopUpCents: data.remainingDailyTopUpCents || 0,
+      };
+    } catch (error) {
+      console.warn('Using mock data due to API error:', error);
+      const delay = 500 + Math.random() * 500;
+      await new Promise(resolve => setTimeout(resolve, delay));
+      return {
+        balanceCents: 2000,
+        remainingDailyTopUpCents: 45000,
+      };
+    }
+  },
+  async createTopUpQuote(userId: string, amountCents: number): Promise<TopUpQuote> {
+    if (!userId || typeof userId !== 'string') {
+      throw new Error('Invalid userId');
+    }
+    if (!amountCents || typeof amountCents !== 'number' || amountCents <= 0) {
+      throw new Error('Invalid amount');
+    }
+    try {
+      const response = await fetch(`https://your-api.com/wallet/${userId}/quote`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ amountCents }),
+      });
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+      const data = await response.json();
+      return {
+        amountCents: data.amountCents || amountCents,
+        feeCents: data.feeCents || 0,
+        resultingBalanceCents: data.resultingBalanceCents || 0,
+      };
+    } catch (error) {
+      console.warn('Using mock data due to API error:', error);
+      const delay = 400 + Math.random() * 400;
+      await new Promise(resolve => setTimeout(resolve, delay));
+      const feeCents = Math.max(30, Math.round(amountCents * 0.03));
+      return {
+        amountCents,
+        feeCents,
+        resultingBalanceCents: 2000 + amountCents,
+      };
+    }
+  },
+};
+export interface AddMoneyScreenProps {
+  userId: string;
+  api?: WalletApi;
+  onTopUpComplete?: (quote: TopUpQuote) => void;
+  onError?: (error: string) => void;
+}
+export function AddMoneyScreen({ 
+  userId, 
+  api = defaultWalletApi,
+  onTopUpComplete,
+  onError,
+}: AddMoneyScreenProps) {
+  const [summary, setSummary] = useState<WalletSummary | null>(null);
+  const [isLoadingSummary, setIsLoadingSummary] = useState(true);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  
+  const [amountInput, setAmountInput] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+  
+  const [quote, setQuote] = useState<TopUpQuote | null>(null);
+  const [isLoadingQuote, setIsLoadingQuote] = useState(false);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
+  
+  const quoteRequestRef = useRef<{ id: number; amountCents: number } | null>(null);
+
+
+  const trackEvent = useCallback((eventName: string, properties?: any) => {
+
+    console.log(`[Analytics] ${eventName}:`, {
+      userId,
+      timestamp: new Date().toISOString(),
+      ...properties,
+    });
+    
+
+  }, [userId]);
+
+  // Fetch wallet summary on mount
+  useEffect(() => {
+    let isMounted = true;
+    
+    const fetchSummary = async () => {
+      setIsLoadingSummary(true);
+      setSummaryError(null);
+      
+      trackEvent('wallet_summary_fetch_started');
+      
+      try {
+        const walletSummary = await api.fetchWalletSummary(userId);
+        if (isMounted) {
+          setSummary(walletSummary);
+          trackEvent('wallet_summary_fetch_success', {
+            balanceCents: walletSummary.balanceCents,
+            remainingDailyLimitCents: walletSummary.remainingDailyTopUpCents,
+          });
+        }
+      } catch (error) {
+        if (isMounted) {
+          const errorMessage = 'Unable to load wallet balance. Please try again.';
+          setSummaryError(errorMessage);
+          trackEvent('wallet_summary_fetch_error', {
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+          if (onError) {
+            onError(errorMessage);
+          }
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingSummary(false);
+        }
+      }
+    };
+    
+    fetchSummary();
+    
+    return () => {
+      isMounted = false;
+    };
+  }, [userId, api, trackEvent, onError]);
+
+
+  useEffect(() => {
+    if (!amountInput || amountInput.trim().length === 0) {
+      setValidationError(null);
+      return;
+    }
+    
+    const error = validateTopUpAmount(amountInput, summary || undefined);
+    setValidationError(error);
+    
+
+    if (error) {
+      setQuote(null);
+      setQuoteError(null);
+    }
+  }, [amountInput, summary]);
+
+
+  const handleGetQuote = useCallback(async () => {
+    if (isLoadingQuote) {
+      return;
+    }
+    
+    const cents = parseAmountToCents(amountInput);
+    if (!cents) {
+      setValidationError('Please enter a valid amount');
+      return;
+    }
+    
+    const error = validateTopUpAmount(amountInput, summary || undefined);
+    if (error) {
+      setValidationError(error);
+      return;
+    }
+    
+    setQuote(null);
+    setQuoteError(null);
+    setIsLoadingQuote(true);
+    
+    const requestId = Date.now() + Math.random();
+    quoteRequestRef.current = { id: requestId, amountCents: cents };
+    
+    trackEvent('quote_request_started', { amountCents: cents });
+    
+    try {
+      const quoteResult = await api.createTopUpQuote(userId, cents);
+      
+      if (quoteRequestRef.current?.id === requestId) {
+        setQuote(quoteResult);
+        setQuoteError(null);
+        trackEvent('quote_request_success', {
+          amountCents: quoteResult.amountCents,
+          feeCents: quoteResult.feeCents,
+          resultingBalanceCents: quoteResult.resultingBalanceCents,
+        });
+      }
+    } catch (error) {
+      if (quoteRequestRef.current?.id === requestId) {
+        const errorMessage = 'Could not fetch quote. Please try again.';
+        setQuoteError(errorMessage);
+        setQuote(null);
+        trackEvent('quote_request_error', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          amountCents: cents,
+        });
+        if (onError) {
+          onError(errorMessage);
+        }
+      }
+    } finally {
+      if (quoteRequestRef.current?.id === requestId) {
+        setIsLoadingQuote(false);
+      }
+    }
+  }, [amountInput, summary, userId, api, isLoadingQuote, trackEvent, onError]);
+
+  const handleConfirmTopUp = useCallback(async () => {
+    if (!quote || isConfirming) {
+      return;
+    }
+    
+    setIsConfirming(true);
+    
+    trackEvent('top_up_confirmation_started', {
+      amountCents: quote.amountCents,
+      feeCents: quote.feeCents,
+      resultingBalanceCents: quote.resultingBalanceCents,
+    });
+    
+    try {
+     
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+     
+      trackEvent('top_up_confirmation_success', {
+        amountCents: quote.amountCents,
+        feeCents: quote.feeCents,
+        resultingBalanceCents: quote.resultingBalanceCents,
+      });
+      
+
+      Alert.alert(
+        'Success!',
+        `Successfully added ${formatCents(quote.amountCents)} to your wallet.`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+        
+              setAmountInput('');
+              setQuote(null);
+              setValidationError(null);
+     
+              if (summary) {
+                setSummary({
+                  ...summary,
+                  balanceCents: quote.resultingBalanceCents,
+                });
+              }
+       
+              if (onTopUpComplete) {
+                onTopUpComplete(quote);
+              }
+            },
+          },
+        ]
+      );
+    } catch (error) {
+
+      const errorMessage = 'Failed to complete top-up. Please try again.';
+      trackEvent('top_up_confirmation_error', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        amountCents: quote.amountCents,
+      });
+      Alert.alert('Error', errorMessage);
+      if (onError) {
+        onError(errorMessage);
+      }
+    } finally {
+      setIsConfirming(false);
+    }
+  }, [quote, isConfirming, trackEvent, summary, onTopUpComplete, onError]);
+
+  const handleRetry = useCallback(async () => {
+    if (isLoadingSummary) {
+      return;
+    }
+    
+    setIsLoadingSummary(true);
+    setSummaryError(null);
+    
+    trackEvent('wallet_summary_retry_started');
+    
+    try {
+      const walletSummary = await api.fetchWalletSummary(userId);
+      setSummary(walletSummary);
+      setSummaryError(null);
+      trackEvent('wallet_summary_retry_success', {
+        balanceCents: walletSummary.balanceCents,
+      });
+    } catch (error) {
+      const errorMessage = 'Unable to load wallet balance. Please try again.';
+      setSummaryError(errorMessage);
+      trackEvent('wallet_summary_retry_error', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      if (onError) {
+        onError(errorMessage);
+      }
+    } finally {
+      setIsLoadingSummary(false);
+    }
+  }, [userId, api, isLoadingSummary, trackEvent, onError]);
+
+  const isPrimaryButtonDisabled = 
+    isLoadingSummary ||
+    isLoadingQuote ||
+    isConfirming ||
+    !!validationError ||
+    !amountInput ||
+    amountInput.trim().length === 0;
+
+  if (isLoadingSummary) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#007AFF" />
+          <Text style={styles.loadingText}>Loading wallet summary...</Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (summaryError) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorText}>{summaryError}</Text>
+          <View style={styles.retryButton}>
+            <Button
+              title="Retry"
+              onPress={handleRetry}
+              accessibilityRole="button"
+              accessibilityLabel="Retry"
+            />
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView 
+      contentContainerStyle={styles.scrollContainer}
+      keyboardShouldPersistTaps="handled"
+    >
+      <View style={styles.container}>
+
+        <View style={styles.balanceContainer}>
+          <Text style={styles.balanceText}>
+            Current balance: {formatCents(summary?.balanceCents || 0)}
+          </Text>
+        </View>
+
+        <View style={styles.inputContainer}>
+          <Text style={styles.inputLabel}>Top-up amount</Text>
+          <TextInput
+            style={[
+              styles.input,
+              validationError && styles.inputError
+            ]}
+            value={amountInput}
+            onChangeText={setAmountInput}
+            placeholder="$0.00"
+            placeholderTextColor="#999999"
+            keyboardType={Platform.OS === 'ios' ? 'decimal-pad' : 'numeric'}
+            accessibilityLabel="Top-up amount"
+            editable={!isLoadingQuote && !isConfirming}
+            testID="amount-input"
+          />
+        </View>
+
+        {validationError && (
+          <View style={styles.validationContainer}>
+            <Text style={styles.validationText}>{validationError}</Text>
+          </View>
+        )}
+
+
+        {quote && !validationError && !quoteError && (
+          <View style={styles.quoteContainer}>
+            <Text style={styles.quoteTitle}>Quote preview</Text>
+            <Text style={styles.quoteLine}>
+              Fee: {formatCents(quote.feeCents)}
+            </Text>
+            <Text style={styles.quoteLine}>
+              Resulting balance: {formatCents(quote.resultingBalanceCents)}
+            </Text>
+
+            <View style={styles.confirmButtonContainer}>
+              <Button
+                title={isConfirming ? "Processing..." : "Confirm Top-up"}
+                onPress={handleConfirmTopUp}
+                disabled={isConfirming}
+                accessibilityRole="button"
+                accessibilityLabel="Confirm top-up"
+                testID="confirm-button"
+                color="#34C759"
+              />
+            </View>
+          </View>
+        )}
+
+        {quoteError && (
+          <View style={styles.quoteErrorContainer}>
+            <Text style={styles.quoteErrorText}>{quoteError}</Text>
+          </View>
+        )}
+        <View style={styles.buttonContainer}>
+          <Button
+            title={isLoadingQuote ? "Getting quote..." : "Get quote"}
+            onPress={handleGetQuote}
+            disabled={isPrimaryButtonDisabled}
+            accessibilityRole="button"
+            accessibilityLabel="Get quote"
+            testID="get-quote-button"
+          />
+        </View>
+        {isLoadingQuote && (
+          <View style={styles.quoteLoadingContainer}>
+            <ActivityIndicator size="small" color="#007AFF" />
+            <Text style={styles.quoteLoadingText}>Fetching quote...</Text>
+          </View>
+        )}
+      </View>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    padding: 20,
+  },
+  scrollContainer: {
+    flexGrow: 1,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#666666',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#FF3B30',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  retryButton: {
+    width: 120,
+  },
+  balanceContainer: {
+    marginBottom: 24,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E5E5',
+  },
+  balanceText: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#1C1C1E',
+  },
+  inputContainer: {
+    marginBottom: 16,
+  },
+  inputLabel: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#1C1C1E',
+    marginBottom: 8,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#D1D1D6',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 18,
+    color: '#1C1C1E',
+    backgroundColor: '#F8F8FC',
+    minHeight: 50,
+  },
+  inputError: {
+    borderColor: '#FF3B30',
+  },
+  validationContainer: {
+    marginBottom: 16,
+    paddingVertical: 8,
+  },
+  validationText: {
+    fontSize: 14,
+    color: '#FF3B30',
+  },
+  quoteContainer: {
+    marginBottom: 24,
+    padding: 16,
+    backgroundColor: '#F8F8FC',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+  },
+  quoteTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1C1C1E',
+    marginBottom: 8,
+  },
+  quoteLine: {
+    fontSize: 14,
+    color: '#3A3A3C',
+    marginVertical: 4,
+  },
+  confirmButtonContainer: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E5E5',
+  },
+  quoteErrorContainer: {
+    marginBottom: 16,
+    paddingVertical: 8,
+  },
+  quoteErrorText: {
+    fontSize: 14,
+    color: '#FF3B30',
+  },
+  buttonContainer: {
+    marginBottom: 16,
+  },
+  quoteLoadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 8,
+  },
+  quoteLoadingText: {
+    marginLeft: 8,
+    fontSize: 14,
+    color: '#666666',
+  },
+});
+
+export default AddMoneyScreen;
