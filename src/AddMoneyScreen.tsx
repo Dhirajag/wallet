@@ -3,7 +3,7 @@ import {
   View,
   Text,
   TextInput,
-  Button,
+  TouchableOpacity,
   ActivityIndicator,
   StyleSheet,
   ScrollView,
@@ -165,19 +165,19 @@ export function AddMoneyScreen({
   onTopUpComplete,
   onError,
 }: AddMoneyScreenProps) {
-  const [summary, setSummary] = useState<WalletSummary | null>(null);
+  const [summary, setSummary] = useState(null as WalletSummary | null);
   const [isLoadingSummary, setIsLoadingSummary] = useState(true);
-  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [summaryError, setSummaryError] = useState(null as string | null);
   
   const [amountInput, setAmountInput] = useState('');
-  const [validationError, setValidationError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState(null as string | null);
   
-  const [quote, setQuote] = useState<TopUpQuote | null>(null);
+  const [quote, setQuote] = useState(null as TopUpQuote | null);
   const [isLoadingQuote, setIsLoadingQuote] = useState(false);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoteError, setQuoteError] = useState(null as string | null);
   const [isConfirming, setIsConfirming] = useState(false);
   
-  const quoteRequestRef = useRef<{ id: number; amountCents: number } | null>(null);
+  const quoteRequestRef = useRef(null as { id: number; amountCents: number } | null);
 
 
   const trackEvent = useCallback((eventName: string, properties?: any) => {
@@ -191,7 +191,6 @@ export function AddMoneyScreen({
 
   }, [userId]);
 
-  // Fetch wallet summary on mount
   useEffect(() => {
     let isMounted = true;
     
@@ -259,7 +258,7 @@ export function AddMoneyScreen({
     }
     
     const cents = parseAmountToCents(amountInput);
-    if (!cents) {
+    if (cents === null) {
       setValidationError('Please enter a valid amount');
       return;
     }
@@ -434,10 +433,9 @@ export function AddMoneyScreen({
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>{summaryError}</Text>
           <View style={styles.retryButton}>
-            <Button
+            <ActionButton
               title="Retry"
               onPress={handleRetry}
-              accessibilityRole="button"
               accessibilityLabel="Retry"
             />
           </View>
@@ -495,11 +493,10 @@ export function AddMoneyScreen({
             </Text>
 
             <View style={styles.confirmButtonContainer}>
-              <Button
+              <ActionButton
                 title={isConfirming ? "Processing..." : "Confirm Top-up"}
                 onPress={handleConfirmTopUp}
                 disabled={isConfirming}
-                accessibilityRole="button"
                 accessibilityLabel="Confirm top-up"
                 testID="confirm-button"
                 color="#34C759"
@@ -514,11 +511,10 @@ export function AddMoneyScreen({
           </View>
         )}
         <View style={styles.buttonContainer}>
-          <Button
+          <ActionButton
             title={isLoadingQuote ? "Getting quote..." : "Get quote"}
             onPress={handleGetQuote}
             disabled={isPrimaryButtonDisabled}
-            accessibilityRole="button"
             accessibilityLabel="Get quote"
             testID="get-quote-button"
           />
@@ -531,6 +527,39 @@ export function AddMoneyScreen({
         )}
       </View>
     </ScrollView>
+  );
+}
+
+function ActionButton({
+  title,
+  onPress,
+  disabled = false,
+  color,
+  testID,
+  accessibilityLabel,
+}: {
+  title: string;
+  onPress: () => void;
+  disabled?: boolean;
+  color?: string;
+  testID?: string;
+  accessibilityLabel?: string;
+}) {
+  return (
+    <TouchableOpacity
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      testID={testID}
+      style={[
+        styles.actionButton,
+        disabled && styles.actionButtonDisabled,
+        color ? { backgroundColor: color } : null,
+      ]}
+    >
+      <Text style={styles.actionButtonText}>{title}</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -567,6 +596,22 @@ const styles = StyleSheet.create({
   },
   retryButton: {
     width: 120,
+  },
+  actionButton: {
+    backgroundColor: '#007AFF',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionButtonDisabled: {
+    opacity: 0.6,
+  },
+  actionButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
   balanceContainer: {
     marginBottom: 24,

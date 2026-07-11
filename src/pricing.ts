@@ -9,9 +9,6 @@ export function formatCents(cents: number): string {
   return `${sign}$${formatted}`;
 }
 
-/**
- * Preserve the existing discountLabel behavior
- */
 export function discountLabel(originalPrice: number, discountPercent: number): string {
   if (discountPercent <= 0 || discountPercent >= 100 || originalPrice <= 0) {
     return '';
