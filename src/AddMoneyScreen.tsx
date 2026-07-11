@@ -238,12 +238,13 @@ export function AddMoneyScreen({
   useEffect(() => {
     if (!amountInput || amountInput.trim().length === 0) {
       setValidationError(null);
+      setQuote(null);
+      setQuoteError(null);
       return;
     }
     
     const error = validateTopUpAmount(amountInput, summary || undefined);
     setValidationError(error);
-    
 
     if (error) {
       setQuote(null);
@@ -346,13 +347,17 @@ export function AddMoneyScreen({
               setAmountInput('');
               setQuote(null);
               setValidationError(null);
+              setQuoteError(null);
      
-              if (summary) {
-                setSummary({
-                  ...summary,
+              setSummary((currentSummary: WalletSummary | null) => {
+                if (!currentSummary) {
+                  return currentSummary;
+                }
+                return {
+                  ...currentSummary,
                   balanceCents: quote.resultingBalanceCents,
-                });
-              }
+                };
+              });
        
               if (onTopUpComplete) {
                 onTopUpComplete(quote);
