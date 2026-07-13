@@ -11,148 +11,14 @@ import {
   Alert,
 } from 'react-native';
 
-export function formatCents(cents: number): string {
-  if (typeof cents !== 'number' || isNaN(cents)) {
-    return '$0.00';
-  }
-  const dollars = Math.abs(cents) / 100;
-  const formatted = dollars.toFixed(2);
-  const sign = cents < 0 ? '-' : '';
-  return `${sign}$${formatted}`;
-}
-export function parseAmountToCents(input: string): number | null {
-  if (!input || typeof input !== 'string') {
-    return null;
-  }
-  let cleaned = input.trim();
-  
-  if (cleaned.startsWith('$')) {
-    cleaned = cleaned.substring(1);
-  }
-  cleaned = cleaned.trim();
-  if (cleaned.length === 0) {
-    return null;
-  }
-  const isValidFormat = /^-?\d*\.?\d{0,2}$/.test(cleaned);
-  if (!isValidFormat) {
-    return null;
-  }
-  const numberValue = parseFloat(cleaned);
-  if (isNaN(numberValue) || !isFinite(numberValue)) {
-    return null;
-  }
-  const cents = Math.round(numberValue * 100);
-  return cents;
-}
-export function validateTopUpAmount(
-  input: string,
-  summary?: WalletSummary
-): string | null {
-  if (!input || input.trim().length === 0) {
-    return "Please enter a valid amount";
-  }
-  const cents = parseAmountToCents(input);
-  if (cents === null) {
-    return "Please enter a valid amount";
-  }
-  if (cents <= 0) {
-    return "Amount must be greater than $0.00";
-  }
-  const MIN_TOP_UP_CENTS = 100;
-  if (cents < MIN_TOP_UP_CENTS) {
-    return "Minimum top-up is $1.00";
-  }
-  const MAX_TOP_UP_CENTS = 50000;
-  if (cents > MAX_TOP_UP_CENTS) {
-    return "Maximum single top-up is $500.00";
-  }
-  if (summary) {
-    if (cents > summary.remainingDailyTopUpCents) {
-      return "Amount exceeds your remaining daily limit";
-    }
-  }
-  return null;
-}
-export interface WalletSummary {
-  balanceCents: number;
-  remainingDailyTopUpCents: number;
-}
-export interface TopUpQuote {
-  amountCents: number;
-  feeCents: number;
-  resultingBalanceCents: number;
-}
-export interface WalletApi {
-  fetchWalletSummary(userId: string): Promise<WalletSummary>;
-  createTopUpQuote(userId: string, amountCents: number): Promise<TopUpQuote>;
-}
-export const defaultWalletApi: WalletApi = {
-  async fetchWalletSummary(userId: string): Promise<WalletSummary> {
-    if (!userId || typeof userId !== 'string') {
-      throw new Error('Invalid userId');
-    }
-    try {
-      const response = await fetch(`https://your-api.com/wallet/${userId}/summary`, {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-      const data = await response.json();
-      return {
-        balanceCents: data.balanceCents || 0,
-        remainingDailyTopUpCents: data.remainingDailyTopUpCents || 0,
-      };
-    } catch (error) {
-      console.warn('Using mock data due to API error:', error);
-      const delay = 500 + Math.random() * 500;
-      await new Promise(resolve => setTimeout(resolve, delay));
-      return {
-        balanceCents: 2000,
-        remainingDailyTopUpCents: 45000,
-      };
-    }
-  },
-  async createTopUpQuote(userId: string, amountCents: number): Promise<TopUpQuote> {
-    if (!userId || typeof userId !== 'string') {
-      throw new Error('Invalid userId');
-    }
-    if (!amountCents || typeof amountCents !== 'number' || amountCents <= 0) {
-      throw new Error('Invalid amount');
-    }
-    try {
-      const response = await fetch(`https://your-api.com/wallet/${userId}/quote`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ amountCents }),
-      });
-      if (!response.ok) {
-        throw new Error(`API error: ${response.status}`);
-      }
-      const data = await response.json();
-      return {
-        amountCents: data.amountCents || amountCents,
-        feeCents: data.feeCents || 0,
-        resultingBalanceCents: data.resultingBalanceCents || 0,
-      };
-    } catch (error) {
-      console.warn('Using mock data due to API error:', error);
-      const delay = 400 + Math.random() * 400;
-      await new Promise(resolve => setTimeout(resolve, delay));
-      const feeCents = Math.max(30, Math.round(amountCents * 0.03));
-      return {
-        amountCents,
-        feeCents,
-        resultingBalanceCents: 2000 + amountCents,
-      };
-    }
-  },
-};
+export { formatCents } from './pricing';
+export { parseAmountToCents, validateTopUpAmount } from './wallet/amount';
+export type { WalletSummary, TopUpQuote, WalletApi } from './wallet/api';
+import { defaultWalletApi } from './wallet/api';
+import type { WalletSummary, WalletApi, TopUpQuote } from './wallet/api';
+import { parseAmountToCents, validateTopUpAmount } from './wallet/amount';
+import { formatCents } from './pricing';
+
 export interface AddMoneyScreenProps {
   userId: string;
   api?: WalletApi;
@@ -242,15 +108,13 @@ export function AddMoneyScreen({
       setQuoteError(null);
       return;
     }
-    
+
+    setQuote(null);
+    setQuoteError(null);
+
     const error = validateTopUpAmount(amountInput, summary || undefined);
     setValidationError(error);
-
-    if (error) {
-      setQuote(null);
-      setQuoteError(null);
-    }
-  }, [amountInput, summary]);
+  }, [amountInput, summary?.remainingDailyTopUpCents]);
 
 
   const handleGetQuote = useCallback(async () => {
@@ -356,6 +220,10 @@ export function AddMoneyScreen({
                 return {
                   ...currentSummary,
                   balanceCents: quote.resultingBalanceCents,
+                  remainingDailyTopUpCents: Math.max(
+                    0,
+                    currentSummary.remainingDailyTopUpCents - quote.amountCents,
+                  ),
                 };
               });
        
