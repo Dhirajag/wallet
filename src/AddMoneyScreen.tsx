@@ -199,7 +199,7 @@ export function AddMoneyScreen({
         resultingBalanceCents: quote.resultingBalanceCents,
       });
       
-
+      const quoteRef = quote;
       Alert.alert(
         'Success!',
         `Successfully added ${formatCents(quote.amountCents)} to your wallet.`,
@@ -219,16 +219,16 @@ export function AddMoneyScreen({
                 }
                 return {
                   ...currentSummary,
-                  balanceCents: quote.resultingBalanceCents,
+                  balanceCents: quoteRef.resultingBalanceCents,
                   remainingDailyTopUpCents: Math.max(
                     0,
-                    currentSummary.remainingDailyTopUpCents - quote.amountCents,
+                    currentSummary.remainingDailyTopUpCents - quoteRef.amountCents,
                   ),
                 };
               });
        
               if (onTopUpComplete) {
-                onTopUpComplete(quote);
+                onTopUpComplete(quoteRef);
               }
             },
           },
@@ -248,7 +248,7 @@ export function AddMoneyScreen({
     } finally {
       setIsConfirming(false);
     }
-  }, [quote, isConfirming, trackEvent, summary, onTopUpComplete, onError]);
+  }, [quote, isConfirming, trackEvent, onTopUpComplete, onError]);
 
   const handleRetry = useCallback(async () => {
     if (isLoadingSummary) {
