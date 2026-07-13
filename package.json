@@ -5,7 +5,10 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
   "dependencies": {
     "@testing-library/react-native": "^12.0.0",
@@ -18,6 +21,7 @@
   },
   "private": true,
   "devDependencies": {
+    "jest": "^30.4.2",
     "jest-junit": "^17.0.0",
     "react-test-renderer": "^19.1.0",
     "typescript": "^5.9.3"
